@@ -12,23 +12,32 @@ open System.Collections.Generic
  
             
 Environment.CurrentDirectory <- "/home/reddragon/mydata/Studium/Vorlesungen/Bachelor Arbeit"
-let file = File.OpenRead("results.13-02-11_1521.table.csv")
+//let file = "results.13-02-11_1521.table.csv"
+let file = "compareLegacy.table.csv"
 
 let parser = 
     CpaBenchmark.DefaultParsers |> Map.add "test/programs/" CpaBenchmark.idParser
 
-let rawBenchmarkTable = CpaBenchmark.parseCsvSteam parser file
+let rawBenchmarkTable = CpaBenchmark.parseCsvFile parser file
 
 let printer = 
     CpaBenchmark.DefaultPrinter |> Map.add "test/programs/" CpaBenchmark.toStringPrinter
 
     
 let benchmarkTable = 
-    rawBenchmarkTable
-    |> CpaBenchmark.filter
-        (fun l -> not <| (CpaBenchmark.getFileNameFromLine l).Contains "/memsafety/")
-
-let rawFilePrefix = "results_sorted"
+    let t =
+        rawBenchmarkTable
+        |> CpaBenchmark.filter
+            (fun l -> not <| (CpaBenchmark.getFileNameFromLine l).Contains "/memsafety/")
+    { t with
+        Sets = 
+            [
+            yield (0, "run set")
+            for i in 1..7 do yield (i, "oldimpl")
+            for i in 1..7 do yield (i + 7, "newimpl")
+            ] |> Map.ofSeq }
+            
+let rawFilePrefix = "results_legacy"
 
 CpaBenchmark.writeStatisticData true printer rawFilePrefix benchmarkTable
 CpaBenchmark.writeStatisticData false printer rawFilePrefix benchmarkTable

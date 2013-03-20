@@ -169,8 +169,13 @@ module CpaBenchmark =
             Lines =
                 readAllLines ()
                 |> Seq.map (parseDataLine parser columns)
-                |> Seq.cache
+                |> Seq.toList
+                |> Seq.ofList
         }
+        
+    let parseCsvFile (parser:Map<string, string -> IComparable>) (file:string) = 
+        use fileStream = File.OpenRead file
+        parseCsvSteam parser fileStream
         
     let sortColumn i benchmarkTable = 
         { benchmarkTable with
