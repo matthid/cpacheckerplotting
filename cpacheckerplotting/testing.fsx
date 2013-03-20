@@ -12,67 +12,46 @@ open System.Collections.Generic
  
             
 Environment.CurrentDirectory <- "/home/reddragon/mydata/Studium/Vorlesungen/Bachelor Arbeit"
-let file = File.OpenRead("results.13-02-11_1521.diff.csv")
+let file = File.OpenRead("results.13-02-11_1521.table.csv")
 
 let parser = 
     CpaBenchmark.DefaultParsers |> Map.add "test/programs/" CpaBenchmark.idParser
-    
-type Cat = {
-    Status :string
-    CpuTime : float
-    WallTime : float
-    TotalTime : float
-    CpaTime : float
-    Memory : float
-    TotalMemory : float }
-let fromAr (ar:obj array) = 
-    {
-        Status = ar.[0] :?> string
-        CpuTime = ar.[1] :?> float
-        WallTime = ar.[2] :?> float
-        TotalTime = ar.[3] :?> float
-        CpaTime = ar.[4] :?> float
-        Memory = ar.[5] :?> float
-        TotalMemory = ar.[6] :?> float
-    }
-type Setups = {
-    Legacy : Cat
-    Field : Cat
-    FieldAliasing : Cat }
-let fromSeq cats = 
-    let c = cats|> Seq.toArray
-    {
-        Legacy = c.[0]
-        Field = c.[1]
-        FieldAliasing = c.[2]
-    }
-    
-let fromRawSeq s = 
-    s
-        |> Seq.splitIn 7
-        |> Seq.map Seq.toArray
-        |> Seq.map fromAr
-        |> fromSeq
-        
-type Benchmark = {
-    File : string
-    Bv : Setups
-    Legacy : Setups
-    LegacyCasts : Setups }
-    
-let fromRawArray (raw:obj array) = 
-    let length = 7*3
-    {
-        File = raw.[0] :?> string
-        Bv = raw |> Seq.skip 1 |> Seq.take length |> fromRawSeq
-        Legacy = raw |> Seq.skip (1 + length) |> Seq.take length |> fromRawSeq
-        LegacyCasts = raw |> Seq.skip (1 + 2*length) |> Seq.take length|> fromRawSeq
-    }
 
-let benchmarkFiles = 
-    let sets, columns, data = CpaBenchmark.parseCsvSteam parser file
-    data
-    |> Seq.map fromRawArray
-    |> Seq.toList
+let rawBenchmarkTable = CpaBenchmark.parseCsvSteam parser file
+
+let printer = 
+    CpaBenchmark.DefaultPrinter |> Map.add "test/programs/" CpaBenchmark.toStringPrinter
+
+    
+let benchmarkTable = 
+    rawBenchmarkTable
+    |> CpaBenchmark.filter
+        (fun l -> not <| (CpaBenchmark.getFileNameFromLine l).Contains "/memsafety/")
+
+let rawFilePrefix = "results_sorted"
+
+CpaBenchmark.writeStatisticData true printer rawFilePrefix benchmarkTable
+CpaBenchmark.writeStatisticData false printer rawFilePrefix benchmarkTable
+
+let userOverride = """set style line 1 lt 1 lw 1 pt 1 lc rgb "red"
+set style line 2 lt 3 lw 1 pt 1 lc rgb "red"
+set style line 3 lt 5 lw 1 pt 1 lc rgb "red"
+set style line 4 lt 1 lw 1 pt 2 lc rgb "blue"
+set style line 5 lt 3 lw 1 pt 2 lc rgb "blue"
+set style line 6 lt 5 lw 1 pt 2 lc rgb "blue"
+set style line 7 lt 1 lw 1 pt 1 lc rgb "green"
+set style line 8 lt 3 lw 1 pt 1 lc rgb "green"
+set style line 9 lt 5 lw 1 pt 1 lc rgb "green"
+set key right bottom
+"""
+
+CpaBenchmark.writePlotFiles true rawFilePrefix userOverride benchmarkTable
+CpaBenchmark.writePlotFiles false rawFilePrefix userOverride benchmarkTable
+
+"Finished"
+
+
+
+
 
     
