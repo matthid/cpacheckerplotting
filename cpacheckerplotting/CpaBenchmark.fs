@@ -26,6 +26,9 @@ module Seq =
                        |> Seq.append acc
                        |> loop
        loop Seq.empty
+   
+
+            
     let splitIn items (input: 'a seq) =
        use s = input.GetEnumerator()
        let rec loop (acc : 'a seq seq) = 
@@ -36,6 +39,21 @@ module Seq =
                        |> loop
        loop Seq.empty
        
+    let tryTake n seq =
+        Seq.append (seq |> Seq.map Some) (Seq.initInfinite (fun i -> None))
+            |> Seq.take n
+            |> Seq.filter Option.isSome
+            |> Seq.map Option.get
+    let trySplitIn items (input: 'a seq) =
+       use s = input.GetEnumerator()
+       let rec loop (acc : 'a seq seq) = 
+           match s |> getMore with 
+           | None -> acc
+           | Some x ->[x |> tryTake items |> Seq.toList |> List.toSeq]
+                       |> Seq.append acc
+                       |> loop
+       loop Seq.empty   
+            
     let combinedEnumerable (input : 'a IEnumerable list) = 
         { new IEnumerable<'a list> with
             member x.GetEnumerator() = 
@@ -182,11 +200,46 @@ module CpaBenchmark =
             Lines = 
                 benchmarkTable.Lines
                 |> Seq.sortBy (fun line -> Array.get line i) }
-                
+       
+    let splitTable maxItems (benchmarkTable:BenchmarkTable) = 
+        benchmarkTable.Lines
+            |> Seq.trySplitIn maxItems
+            |> Seq.map 
+                (fun partLines ->
+                    { benchmarkTable with Lines = partLines })
+   
+    type PrintContext = {
+        Line : IComparable array
+        PrintItem : IComparable
+        Index : int }
+              
+    type Printer = PrintContext -> String                                      
     let toStringPrinter (compareable:IComparable) = compareable.ToString()
     let floatPrinter (compareable:IComparable) = (compareable :?> float).ToString(System.Globalization.CultureInfo.InvariantCulture)
-    let DefaultPrinter : Map<string, IComparable -> string> = 
+    let makeReplacePrinter (old:string) rep printer s = 
+        let res = printer s : string
+        res.Replace(old, rep)
+        
+    let makeCsvPrinter printer = 
+        printer
+            |> makeReplacePrinter " " "_"
+            |> makeReplacePrinter "\t" "_"
+         
+    let makeLatexTablePrinter printer = 
+        printer
+            |> makeReplacePrinter "&" "_"
+            |> makeReplacePrinter "\\\\" "_"
+            |> makeReplacePrinter "_" "\-{\\textunderscore}\-"
+            |> makeReplacePrinter "/" "/\-"
+    let mapPrinters printermap map = 
+        map 
+            |> Map.map (fun k v -> printermap v)
+            
+    let fromPrimitivePrinter prim context = 
+        prim context.PrintItem
+    let DefaultPrinter : Map<string, Printer> = 
         [ 
+            "header", toStringPrinter
             "status", toStringPrinter
             "cputime", floatPrinter
             "walltime", floatPrinter
@@ -195,46 +248,71 @@ module CpaBenchmark =
             "memory", floatPrinter
             "totalmemory", floatPrinter
         ] |> Map.ofSeq
+          |> mapPrinters fromPrimitivePrinter
+    let mapToPrintContext line = 
+        line
+            |> Seq.mapi (fun i item -> {Line = line; PrintItem = item; Index = i})
+    let formatLine joinLine (printer:Map<string,Printer>) (columns:Map<int,string>) (line:IComparable array) : string= 
+        line
+            |> mapToPrintContext
+            |> Seq.mapi (getItemOverColumn columns printer)
+            |> joinLine
+        //String.Join("\t", formatedItems)
         
-    let printLine (printer:Map<string,IComparable -> string>) (columns:Map<int,string>) (line:IComparable array) = 
-        let printItem key value = 
-            let printer = getItemOverColumn columns printer key 
-            let formated = printer value
-            formated.Replace(' ', '_').Replace('\t', '_')
-            
-        let formatedItems =
-            line
-                |> Seq.mapi printItem
-        String.Join("\t", formatedItems)
+    let openCreate filePath = 
+        File.Open(filePath, FileMode.Create)
         
-    let printDataFile dataFile (printer:Map<string,IComparable -> string>) (table:BenchmarkTable) = 
-        use file = File.Open(dataFile, FileMode.Create)
-        use writer = new StreamWriter(file)
-        let writeLine (line:string) = 
-            writer.WriteLine line
+    let getWriter (file:Stream) = 
+        new StreamWriter(file)
         
-        let sets =
-            table.Sets
-                |> Map.toSeq            
-                |> Seq.map (fun (k,v) -> v)
-                |> Seq.map (fun v -> v.ToString())
-        let setLine = 
-            "# " + String.Join("\t", sets)
+    let printRawFile joinLine headerJoin writeLine (printer:Map<string,Printer>) (table:BenchmarkTable) =        
+        let mapToStrings map = 
+            map 
+                |> Map.toSeq
+                |> Seq.sortBy fst
+                |> Seq.map snd
+                |> Seq.cast<IComparable>
+                |> Seq.toArray
+                |> mapToPrintContext
+                |> Seq.map (printer |> Map.find "header")
+        let sets = table.Sets |> mapToStrings
+        let setLine = headerJoin sets
         writeLine setLine
         
-        let columns =
-            table.Columns
-                |> Map.toSeq            
-                |> Seq.map (fun (k,v) -> v)
-                |> Seq.map (fun v -> v.ToString())
-        let columnLine = 
-            "# " + String.Join("\t", columns)        
+        let columns = table.Columns |> mapToStrings
+        let columnLine = headerJoin columns       
         writeLine columnLine
         
         table.Lines
-            |> Seq.map (printLine printer table.Columns)
+            |> Seq.map (formatLine joinLine printer table.Columns)
             |> Seq.iter writeLine
-    
+    let getLineWriter (writer:StreamWriter) =
+        let writeLine (line:string) = 
+            writer.WriteLine( line)
+        writeLine
+    let printCvsFile dataFile (printer:Map<string,Printer>) (table:BenchmarkTable) = 
+        use writer = getWriter dataFile 
+        printRawFile 
+            (fun formatedItems -> String.Join("\t", formatedItems)) 
+            (fun set -> "# " + String.Join("\t", set)) 
+            (writer |> getLineWriter) 
+            (printer |> mapPrinters makeCsvPrinter)
+            table
+    let printLatexTableFile (cols:string seq) dataFile (printer:Map<string,Printer>) (table:BenchmarkTable) = 
+        use writer = getWriter dataFile        
+        let writeLine = getLineWriter writer   
+        let colDefs = ("| " + String.Join(" | ", cols) + " |")
+        writeLine (sprintf "\\begin{tabular}{%s}" colDefs)
+        writeLine "\\hline"
+        printRawFile 
+            (fun formatedItems -> "\t" + String.Join(" & ", formatedItems) + " \\\\ \\hline") 
+            (fun set -> "\t" + String.Join(" & ", set) + " \\\\ \\hline") 
+            writeLine 
+            (printer |> mapPrinters makeLatexTablePrinter)
+            table
+        
+        writeLine "\\end{tabular}"
+        
     let getFileNameFromLine (line:IComparable array) = line.[0]:?>string    
     let isValidOnCol i (line:IComparable array) =
         let dataItem = Array.get line i :?> float
@@ -273,12 +351,14 @@ module CpaBenchmark =
             if col = "status" then ()
             else
             
-            let fileToWrite = (if onlyCorrect then sprintf "%s_correct_%s_%s.csv" else sprintf "%s_%s_%s.csv") rawFilePrefix set col
+            use fileToWrite = 
+                (if onlyCorrect then sprintf "%s_correct_%s_%s.csv" else sprintf "%s_%s_%s.csv") rawFilePrefix set col
+                |> openCreate
             benchmarkTable
                 |> filter (isValidOnCol i)
                 |> filter (if onlyCorrect then isCorrectOnCol benchmarkTable.Columns i else (fun _ -> true))
                 |> sortColumn i 
-                |> printDataFile fileToWrite printer
+                |> printCvsFile fileToWrite printer
         
             
     let template = """# Template
